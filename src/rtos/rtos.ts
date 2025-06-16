@@ -8,6 +8,7 @@ import { RTOSUCOS2 } from './rtos-ucosii';
 import { RTOSEmbOS } from './rtos-embos';
 import { RTOSChibiOS } from './rtos-chibios';
 import { RTOSZEPHYR } from './rtos-zephyr';
+import { RTOSRTX4 } from './rtos-rtx4';
 
 import {
     IDebugTracker,
@@ -39,6 +40,8 @@ const RTOS_TYPES = {
     ChibiOS: RTOSChibiOS,
     // eslint-disable-next-line @typescript-eslint/naming-convention
     Zephyr: RTOSZEPHYR,
+    // eslint-disable-next-line @typescript-eslint/naming-convention
+    'RTX v4': RTOSRTX4,
 };
 
 const defaultHtmlInfo: RTOSCommon.HtmlInfo = { html: '', css: '' };
