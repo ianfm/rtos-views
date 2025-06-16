@@ -70,6 +70,11 @@
                     "items": "string",
                     "default": [],
                     "description": "List (array) of additional debuggers to track besides the default ones. Reload of window required"
+                },
+                "mcu-debug.rtos-views.debugLogging": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable detailed debug logging for RTOS providers. Shows detailed information about RTOS detection and thread parsing."
                 }
             }
         },

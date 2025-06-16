@@ -78,6 +78,7 @@ export class RTOSRTX4 extends RTOSCommon.RTOSBase {
     private stale = true;
     private foundThreads: RTOSCommon.RTOSThreadInfo[] = [];
     private finalThreads: RTOSCommon.RTOSThreadInfo[] = [];
+    private processedAddresses: Set<number> = new Set(); // Track processed task addresses
     private timeInfo = '';
     private readonly maxThreads = 256;
     private helpHtml: string | undefined;
@@ -85,6 +86,9 @@ export class RTOSRTX4 extends RTOSCommon.RTOSBase {
     // Stack growth direction (-1 for downward, 1 for upward)
     private stackIncrements = -1;
     private stackPattern = 0xCCCCCCCC; // Default stack fill pattern
+
+    // Logging configuration - get from VS Code settings
+    private debugLogging: boolean = false;
 
     constructor(public session: vscode.DebugSession) {
         super(session, 'RTX v4');
@@ -97,6 +101,29 @@ export class RTOSRTX4 extends RTOSCommon.RTOSBase {
             if (session.configuration.rtosViewConfig.stackGrowth) {
                 this.stackIncrements = parseInt(session.configuration.rtosViewConfig.stackGrowth);
             }
+        }
+
+        // Get debug logging setting from VS Code configuration
+        const config = vscode.workspace.getConfiguration('mcu-debug.rtos-views');
+        this.debugLogging = config.get('debugLogging', false);
+    }
+
+    // Logging methods following VS Code patterns
+    private logError(message: string, ...args: any[]): void {
+        console.error(`[RTX v4] ${message}`, ...args);
+    }
+
+    private logWarn(message: string, ...args: any[]): void {
+        console.warn(`[RTX v4] ${message}`, ...args);
+    }
+
+    private logInfo(message: string, ...args: any[]): void {
+        console.log(`[RTX v4] ${message}`, ...args);
+    }
+
+    private logDebug(message: string, ...args: any[]): void {
+        if (this.debugLogging) {
+            console.log(`[RTX v4 DEBUG] ${message}`, ...args);
         }
     }
 
@@ -167,6 +194,7 @@ export class RTOSRTX4 extends RTOSCommon.RTOSBase {
             this.stale = true;
             this.timeInfo = new Date().toISOString();
             this.foundThreads = [];
+            this.processedAddresses.clear(); // Reset processed addresses for new refresh
 
             // Start the refresh process
             this.refreshRTXInfo(frameId).then(
@@ -185,32 +213,32 @@ export class RTOSRTX4 extends RTOSCommon.RTOSBase {
 
     private async refreshRTXInfo(frameId: number): Promise<void> {
         try {
-            console.log('RTX v4: Starting refresh...');
+            this.logInfo('Starting refresh...');
 
             // Get current running task from os_tsk.run
             if (this.osTask) {
-                console.log('RTX v4: Trying to get os_tsk info...');
+                this.logDebug('Trying to get os_tsk info...');
                 const osTaskObj = await this.osTask.getVarChildrenObj(frameId);
-                console.log('RTX v4: os_tsk object:', osTaskObj);
+                this.logDebug('os_tsk object:', osTaskObj);
 
                 if (osTaskObj && osTaskObj['run']) {
                     const currentTaskAddr = parseInt(osTaskObj['run'].val);
-                    console.log('RTX v4: Current task address:', RTOSCommon.hexFormat(currentTaskAddr));
+                    this.logDebug('Current task address:', RTOSCommon.hexFormat(currentTaskAddr));
                     if (currentTaskAddr && currentTaskAddr !== 0) {
                         // Mark this as the running task
                         await this.getTaskInfo(currentTaskAddr, frameId, true);
                     }
                 } else {
-                    console.log('RTX v4: No run field in os_tsk or os_tsk is null');
+                    this.logDebug('No run field in os_tsk or os_tsk is null');
                 }
             } else {
-                console.log('RTX v4: osTask is null, trying alternative detection...');
+                this.logDebug('osTask is null, trying alternative detection...');
             }
 
             // Try to get all active tasks (simplified approach)
             await this.getAllActiveTasks(frameId);
 
-            console.log(`RTX v4: Found ${this.foundThreads.length} threads`);
+            this.logInfo(`Found ${this.foundThreads.length} threads`);
 
             // Sort threads by task ID or address
             if (this.foundThreads.length > 0) {
@@ -227,9 +255,9 @@ export class RTOSRTX4 extends RTOSCommon.RTOSBase {
             }
 
             this.finalThreads = [...this.foundThreads];
-            console.log('RTX v4: Refresh completed successfully');
+            this.logInfo('Refresh completed successfully');
         } catch (e) {
-            console.error('RTX v4 refreshRTXInfo() failed: ', e);
+            this.logError('refreshRTXInfo() failed: ', e);
             throw e;
         }
     }
@@ -237,56 +265,65 @@ export class RTOSRTX4 extends RTOSCommon.RTOSBase {
     private async getAllActiveTasks(frameId: number): Promise<void> {
         // Access os_active_TCB[8] array to get all active tasks
         try {
-            console.log('RTX v4: Trying to get os_active_TCB array...');
+            this.logDebug('Trying to get os_active_TCB array...');
 
             // Your build has os_active_TCB[8], so we'll iterate through each slot
             for (let i = 0; i < 8; i++) {
                 try {
                     const tcbExpr = `os_active_TCB[${i}]`;
                     const tcbValue = await this.getExprVal(tcbExpr, frameId);
-                    console.log(`RTX v4: os_active_TCB[${i}] = ${tcbValue}`);
+                    this.logDebug(`os_active_TCB[${i}] = ${tcbValue}`);
 
                     if (tcbValue && tcbValue !== '0x0' && tcbValue !== 'NULL' && tcbValue !== '(void *) 0x0') {
                         const taskAddr = parseInt(tcbValue);
                         if (taskAddr && taskAddr !== 0) {
-                            console.log(`RTX v4: Processing task at ${RTOSCommon.hexFormat(taskAddr)}`);
+                            this.logDebug(`Processing task at ${RTOSCommon.hexFormat(taskAddr)}`);
                             await this.getTaskInfo(taskAddr, frameId, false);
                         }
                     }
                 } catch (e) {
-                    console.log(`RTX v4: Failed to get os_active_TCB[${i}]:`, e);
+                    this.logDebug(`Failed to get os_active_TCB[${i}]:`, e);
                 }
             }
         } catch (e) {
-            console.log('RTX v4: Failed to access os_active_TCB array:', e);
+            this.logWarn('Failed to access os_active_TCB array:', e);
         }
     }
 
     private async getTaskInfo(taskAddr: number, frameId: number, isRunning: boolean): Promise<void> {
         try {
-            console.log(`RTX v4: Getting task info for ${RTOSCommon.hexFormat(taskAddr)}, running=${isRunning}`);
+            // Check if we've already processed this task address
+            if (this.processedAddresses.has(taskAddr)) {
+                this.logDebug(`Skipping already processed task at ${RTOSCommon.hexFormat(taskAddr)}`);
+                return;
+            }
+
+            this.logDebug(`Getting task info for ${RTOSCommon.hexFormat(taskAddr)}, running=${isRunning}`);
+
+            // Mark this address as processed
+            this.processedAddresses.add(taskAddr);
 
             // Get task control block information by casting the address to OS_TCB pointer
             const tcbExpr = `*(struct OS_TCB*)${RTOSCommon.hexFormat(taskAddr)}`;
-            console.log(`RTX v4: Evaluating expression: ${tcbExpr}`);
+            this.logDebug(`Evaluating expression: ${tcbExpr}`);
 
             const tcbVar = new RTOSCommon.RTOSVarHelper(tcbExpr, this);
             const tcbInfo = await tcbVar.getVarChildrenObj(frameId);
-            console.log('RTX v4: TCB info:', tcbInfo);
+            this.logDebug('TCB info:', tcbInfo);
 
             if (tcbInfo) {
                 const threadInfo = await this.createThreadInfo(tcbInfo, frameId, isRunning, taskAddr);
                 if (threadInfo) {
-                    console.log('RTX v4: Created thread info:', threadInfo.display);
+                    this.logDebug('Created thread info:', threadInfo.display);
                     this.foundThreads.push(threadInfo);
                 } else {
-                    console.log('RTX v4: Failed to create thread info');
+                    this.logDebug('Failed to create thread info');
                 }
             } else {
-                console.log('RTX v4: No TCB info available');
+                this.logDebug('No TCB info available');
             }
         } catch (e) {
-            console.log(`RTX v4: Failed to get task info for address ${RTOSCommon.hexFormat(taskAddr)}:`, e);
+            this.logWarn(`Failed to get task info for address ${RTOSCommon.hexFormat(taskAddr)}:`, e);
         }
     }
 
@@ -299,17 +336,37 @@ export class RTOSRTX4 extends RTOSCommon.RTOSBase {
         try {
             const display: { [key: string]: RTOSCommon.DisplayRowItem } = {};
 
-            // Task ID
-            const taskId = tcbInfo['task_id']?.val || '??';
+            // Task ID - parse the numeric value
+            let taskId = '??';
+            const taskIdStr = tcbInfo['task_id']?.val || '';
+            if (taskIdStr) {
+                // Handle format like "2 '\002'" - extract just the number
+                const idMatch = taskIdStr.match(/^(\d+)/);
+                if (idMatch) {
+                    taskId = idMatch[1];
+                } else {
+                    taskId = taskIdStr;
+                }
+            }
             display[DisplayFields[DisplayFields.ID]] = { text: taskId };
 
             // Task Address
             const address = taskAddr ? RTOSCommon.hexFormat(taskAddr) : (tcbInfo['address']?.val || '??');
             display[DisplayFields[DisplayFields.Address]] = { text: address };
 
-            // Task Name - RTX v4 doesn't have built-in task names, so we'll use the task function pointer
-            const taskFunc = tcbInfo['ptask']?.val || 'Unknown';
-            display[DisplayFields[DisplayFields.TaskName]] = { text: taskFunc };
+            // Task Name - Extract function name from ptask pointer
+            let taskName = 'Unknown';
+            const taskFunc = tcbInfo['ptask']?.val || '';
+            if (taskFunc) {
+                // Extract function name from format like "0x8002fb9 <main>"
+                const match = taskFunc.match(/<([^>]+)>/);
+                if (match) {
+                    taskName = match[1];
+                } else {
+                    taskName = taskFunc;
+                }
+            }
+            display[DisplayFields[DisplayFields.TaskName]] = { text: taskName };
 
             // Task Status
             const state = parseInt(tcbInfo['state']?.val || '0');
@@ -329,8 +386,18 @@ export class RTOSRTX4 extends RTOSCommon.RTOSBase {
             }
             display[DisplayFields[DisplayFields.Status]] = { text: statusText };
 
-            // Priority
-            const priority = tcbInfo['prio']?.val || '??';
+            // Priority - parse the numeric value
+            let priority = '??';
+            const prioStr = tcbInfo['prio']?.val || '';
+            if (prioStr) {
+                // Handle format like "4 '\004'" - extract just the number
+                const prioMatch = prioStr.match(/^(\d+)/);
+                if (prioMatch) {
+                    priority = prioMatch[1];
+                } else {
+                    priority = prioStr;
+                }
+            }
             display[DisplayFields[DisplayFields.Priority]] = { text: priority };
 
             // Stack information
@@ -362,39 +429,59 @@ export class RTOSRTX4 extends RTOSCommon.RTOSBase {
 
             return threadInfo;
         } catch (e) {
-            console.log('Failed to create thread info:', e);
+            this.logWarn('Failed to create thread info:', e);
             return null;
         }
     }
 
     private async getStackInfo(tcbInfo: RTOSCommon.RTOSStrToValueMap): Promise<RTOSCommon.RTOSStackInfo> {
         // RTX v4 stack information from OS_TCB structure
-        const tskStack = tcbInfo['tsk_stack']?.val;  // Current stack pointer (R13)
-        const stack = tcbInfo['stack']?.val;         // Pointer to stack memory block
+        const tskStackStr = tcbInfo['tsk_stack']?.val;  // Current stack pointer (R13)
+        const stackStr = tcbInfo['stack']?.val;         // Pointer to stack memory block
+        const privStackStr = tcbInfo['priv_stack']?.val; // Stack size
 
         const stackInfo: RTOSCommon.RTOSStackInfo = {
             stackStart: 0,
             stackTop: 0
         };
 
-        if (tskStack) {
-            stackInfo.stackTop = parseInt(tskStack);
+        // Parse stack values (they might be in decimal or hex format)
+        if (tskStackStr) {
+            stackInfo.stackTop = parseInt(tskStackStr);
         }
 
-        if (stack) {
-            stackInfo.stackStart = parseInt(stack);
-        }
-
-        // Calculate stack usage if we have both values
-        if (stackInfo.stackStart && stackInfo.stackTop) {
-            const stackDelta = Math.abs(stackInfo.stackTop - stackInfo.stackStart);
-            if (this.stackIncrements < 0) {
-                // Stack grows downward (typical for ARM)
-                stackInfo.stackUsed = stackDelta;
-                // We don't have easy access to stack size in RTX v4 without additional info
+        if (stackStr) {
+            // Handle format like "0x200026f8 <os_stack_mem+216>"
+            const stackMatch = stackStr.match(/0x([0-9a-fA-F]+)/);
+            if (stackMatch) {
+                stackInfo.stackStart = parseInt('0x' + stackMatch[1]);
             } else {
-                // Stack grows upward
-                stackInfo.stackFree = stackDelta;
+                stackInfo.stackStart = parseInt(stackStr);
+            }
+        }
+
+        // Get stack size from priv_stack field
+        if (privStackStr) {
+            const stackSize = parseInt(privStackStr);
+            if (stackSize > 0) {
+                stackInfo.stackSize = stackSize;
+
+                // Calculate stack end based on size and growth direction
+                if (this.stackIncrements < 0) {
+                    // Stack grows downward
+                    stackInfo.stackEnd = stackInfo.stackStart + stackSize;
+                    if (stackInfo.stackTop) {
+                        stackInfo.stackUsed = stackInfo.stackEnd - stackInfo.stackTop;
+                        stackInfo.stackFree = stackInfo.stackTop - stackInfo.stackStart;
+                    }
+                } else {
+                    // Stack grows upward
+                    stackInfo.stackEnd = stackInfo.stackStart - stackSize;
+                    if (stackInfo.stackTop) {
+                        stackInfo.stackUsed = stackInfo.stackTop - stackInfo.stackStart;
+                        stackInfo.stackFree = stackInfo.stackEnd - stackInfo.stackTop;
+                    }
+                }
             }
         }
 
