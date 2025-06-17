@@ -30,8 +30,8 @@ RTX4Items[DisplayFields[DisplayFields.TaskName]] = { width: 4, headerRow1: '', h
 RTX4Items[DisplayFields[DisplayFields.Status]] = { width: 3, headerRow1: '', headerRow2: 'Status' };
 RTX4Items[DisplayFields[DisplayFields.Priority]] = {
     width: 1.5,
-    headerRow1: 'Prio',
-    headerRow2: 'rity',
+    headerRow1: '',
+    headerRow2: 'Priority',
     colType: numType
 };
 RTX4Items[DisplayFields[DisplayFields.StackStart]] = {
